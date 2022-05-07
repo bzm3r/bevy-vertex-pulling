@@ -13,7 +13,6 @@ struct View {
 struct Quad {
     center: vec4<f32>;
     half_extents: vec4<f32>;
-    color: vec4<f32>;
 };
 
 struct Quads {
@@ -50,7 +49,7 @@ fn vertex([[builtin(vertex_index)]] vertex_index: u32) -> VertexOutput {
     out.world_normal = vec3<f32>(0.0, 0.0, 1.0);
 
     out.clip_position = view.view_proj * out.world_position;
-    out.color = quad.color;
+    out.color = vec4<f32>(1.0, 1.0, 1.0, 1.0);
     return out;
 }
 

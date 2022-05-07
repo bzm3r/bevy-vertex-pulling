@@ -59,7 +59,6 @@ fn main() {
 
 #[derive(Clone, Debug, Default)]
 struct Quad {
-    color: Color,
     center: Vec3,
     half_extents: Vec3,
 }
@@ -67,7 +66,6 @@ struct Quad {
 impl Quad {
     pub fn random<R: Rng + ?Sized>(rng: &mut R, min: Vec3, max: Vec3) -> Self {
         Self {
-            color: Color::WHITE,
             center: random_point_vec3(rng, min, max),
             half_extents: 0.01 * Vec3::ONE,
         }
@@ -139,7 +137,6 @@ fn extract_quads(mut commands: Commands, mut quads: Query<(Entity, &mut Quads)>)
 struct GpuQuad {
     center: Vec4,
     half_extents: Vec4,
-    color: [f32; 4],
 }
 
 impl From<&Quad> for GpuQuad {
@@ -147,7 +144,6 @@ impl From<&Quad> for GpuQuad {
         Self {
             center: quad.center.extend(1.0),
             half_extents: quad.half_extents.extend(0.0),
-            color: quad.color.as_rgba_f32(),
         }
     }
 }
