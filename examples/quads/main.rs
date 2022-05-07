@@ -59,25 +59,21 @@ fn main() {
 
 #[derive(Clone, Debug, Default)]
 struct Quad {
-    center: Vec3,
-    half_extents: Vec3,
+    p0: Vec2,
+    p1: Vec2,
 }
 
 impl Quad {
-    pub fn random<R: Rng + ?Sized>(rng: &mut R, min: Vec3, max: Vec3) -> Self {
+    pub fn random<R: Rng + ?Sized>(rng: &mut R, min: Vec2, max: Vec2) -> Self {
         Self {
-            center: random_point_vec3(rng, min, max),
-            half_extents: 0.01 * Vec3::ONE,
+            p0: random_point_vec2(rng, min, max),
+            p1: 0.01 * Vec2::ONE,
         }
     }
 }
 
-fn random_point_vec3<R: Rng + ?Sized>(rng: &mut R, min: Vec3, max: Vec3) -> Vec3 {
-    Vec3::new(
-        rng.gen_range(min.x..max.x),
-        rng.gen_range(min.y..max.y),
-        rng.gen_range(min.z..max.z),
-    )
+fn random_point_vec2<R: Rng + ?Sized>(rng: &mut R, min: Vec2, max: Vec2) -> Vec2 {
+    Vec2::new(rng.gen_range(min.x..max.x), rng.gen_range(min.y..max.y))
 }
 
 #[derive(Clone, Component, Debug, Default)]
@@ -96,8 +92,8 @@ fn setup(mut commands: Commands) {
 
     let mut quads = Quads::default();
     let mut rng = rand::thread_rng();
-    let min = -10.0 * Vec3::ONE;
-    let max = 10.0 * Vec3::ONE;
+    let min = -10.0 * Vec2::ONE;
+    let max = 10.0 * Vec2::ONE;
     let n_quads = std::env::args()
         .nth(1)
         .and_then(|arg| arg.parse::<usize>().ok())
@@ -135,15 +131,15 @@ fn extract_quads(mut commands: Commands, mut quads: Query<(Entity, &mut Quads)>)
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
 struct GpuQuad {
-    center: Vec4,
-    half_extents: Vec4,
+    p0: Vec2,
+    p1: Vec2,
 }
 
 impl From<&Quad> for GpuQuad {
     fn from(quad: &Quad) -> Self {
         Self {
-            center: quad.center.extend(1.0),
-            half_extents: quad.half_extents.extend(0.0),
+            p0: quad.p0,
+            p1: quad.p1,
         }
     }
 }
