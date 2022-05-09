@@ -51,35 +51,36 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(FrameTimeDiagnosticsPlugin)
         .add_plugin(LogDiagnosticsPlugin::default())
-        .add_plugin(QuadsPlugin)
+        .add_plugin(VertexPullPlugin)
         .add_startup_system(setup)
         .add_system(camera_controller)
         .run();
 }
 
-#[derive(Clone, Debug, Default)]
-struct Quad {
-    p0: Vec2,
-    p1: Vec2,
+// Ultimately, Doug converts ints into f32s
+#[derive(Clone, Copy, Default, Debug)]
+pub struct Point {
+    pub x: f32,
+    pub y: f32,
 }
 
-impl Quad {
-    pub fn random<R: Rng + ?Sized>(rng: &mut R, min: Vec2, max: Vec2) -> Self {
-        Self {
-            p0: random_point_vec2(rng, min, max),
-            p1: 0.01 * Vec2::ONE,
-        }
-    }
-}
-
-fn random_point_vec2<R: Rng + ?Sized>(rng: &mut R, min: Vec2, max: Vec2) -> Vec2 {
-    Vec2::new(rng.gen_range(min.x..max.x), rng.gen_range(min.y..max.y))
+// Rect in the format Doug uses
+#[derive(Clone, Copy, Default, Component, Debug)]
+pub struct Rect {
+    pub p0: Point,
+    pub p1: Point,
 }
 
 #[derive(Clone, Component, Debug, Default)]
-struct Quads {
-    data: Vec<Quad>,
+struct BatchedQuads {
+    data: Vec<Rect>,
     extracted: bool,
+}
+
+#[derive(Clone, Component, Debug, Default)]
+struct ExtractedQuads {
+    data: Vec<Rect>,
+    prepared: bool,
 }
 
 fn setup(mut commands: Commands) {
@@ -90,18 +91,22 @@ fn setup(mut commands: Commands) {
         })
         .insert(CameraController::default());
 
-    let mut quads = Quads::default();
-    let mut rng = rand::thread_rng();
-    let min = -10.0 * Vec2::ONE;
-    let max = 10.0 * Vec2::ONE;
-    let n_quads = std::env::args()
-        .nth(1)
-        .and_then(|arg| arg.parse::<usize>().ok())
-        .unwrap_or(1_000_000);
-    info!("Generating {} quads", n_quads);
-    for _ in 0..n_quads {
-        quads.data.push(Quad::random(&mut rng, min, max));
-    }
+    let mut quads = BatchedQuads::default();
+    // let mut rng = rand::thread_rng();
+    // let min = -10.0 * Vec2::ONE;
+    // let max = 10.0 * Vec2::ONE;
+    // let n_quads = std::env::args()
+    //     .nth(1)
+    //     .and_then(|arg| arg.parse::<usize>().ok())
+    //     .unwrap_or(1_000_000);
+    // info!("Generating {} quads", n_quads);
+    // for _ in 0..n_quads {
+    //     quads.data.push(Quad::random(&mut rng, min, max));
+    // }
+    quads.data.push(Rect {
+        p0: Point { x: -1.0, y: -1.0 },
+        p1: Point { x: 1.0, y: 1.0 },
+    });
     commands.spawn_bundle((quads,));
 }
 
@@ -113,20 +118,41 @@ fn extract_quads_phase(mut commands: Commands, active_3d: Res<ActiveCamera<Camer
     }
 }
 
-fn extract_quads(mut commands: Commands, mut quads: Query<(Entity, &mut Quads)>) {
-    for (entity, mut quads) in quads.iter_mut() {
-        if quads.extracted {
-            commands.get_or_spawn(entity).insert(Quads {
-                data: Vec::new(),
-                extracted: true,
+fn extract_quads(
+    mut commands: Commands,
+    mut batched_quads_query: Query<(Entity, &mut BatchedQuads)>,
+) {
+    for (entity, mut batched_quads) in batched_quads_query.iter_mut() {
+        if !batched_quads.extracted {
+            commands.get_or_spawn(entity).insert(ExtractedQuads {
+                data: batched_quads.data.clone(),
+                prepared: false,
             });
+            batched_quads.extracted = true;
         } else {
-            commands.get_or_spawn(entity).insert(quads.clone());
-            // NOTE: Set this after cloning so we don't extract next time
-            quads.extracted = true;
+            commands.get_or_spawn(entity).insert(ExtractedQuads {
+                data: Vec::new(),
+                prepared: false,
+            });
         }
     }
 }
+
+// fn extract_quads(mut commands: Commands, mut quads: Query<(Entity, &mut BatchedQuads)>) {
+//     for (entity, mut quads) in quads.iter_mut() {
+//         if quads.extracted {
+//             commands.get_or_spawn(entity).insert(BatchedQuads {
+//                 data: Vec::new(),
+//                 extracted: true,
+//                 prepared: true,
+//             });
+//         } else {
+//             commands.get_or_spawn(entity).insert(quads.clone());
+//             // NOTE: Set this after cloning so we don't extract next time
+//             quads.extracted = true;
+//         }
+//     }
+// }
 
 #[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
 #[repr(C)]
@@ -135,11 +161,11 @@ struct GpuQuad {
     p1: Vec2,
 }
 
-impl From<&Quad> for GpuQuad {
-    fn from(quad: &Quad) -> Self {
+impl From<&Rect> for GpuQuad {
+    fn from(rect: &Rect) -> Self {
         Self {
-            p0: quad.p0,
-            p1: quad.p1,
+            p0: Vec2::new(rect.p0.x, rect.p0.y),
+            p1: Vec2::new(rect.p1.x, rect.p1.y),
         }
     }
 }
@@ -167,40 +193,52 @@ struct GpuQuadsBindGroup {
 }
 
 fn prepare_quads(
-    quads: Query<&Quads>,
+    mut commands: Commands,
+    quads: Query<(Entity, &ExtractedQuads)>,
     render_device: Res<RenderDevice>,
     render_queue: Res<RenderQueue>,
     mut gpu_quads: ResMut<GpuQuads>,
+    quads_pipeline: Res<QuadsPipeline>,
 ) {
-    for quads in quads.iter() {
-        if quads.extracted {
-            continue;
+    for (entity, quads) in quads.iter() {
+        if !quads.prepared {
+            for quad in quads.data.iter() {
+                gpu_quads.instances.push(GpuQuad::from(quad));
+            }
+            gpu_quads.index_count = gpu_quads.instances.len() as u32 * 6;
+            let mut indices = Vec::with_capacity(gpu_quads.index_count as usize);
+            for i in 0..gpu_quads.instances.len() {
+                let base = (i * 6) as u32;
+                indices.push(base + 2);
+                indices.push(base);
+                indices.push(base + 1);
+                indices.push(base + 1);
+                indices.push(base + 3);
+                indices.push(base + 2);
+            }
+            gpu_quads.index_buffer = Some(render_device.create_buffer_with_data(
+                &BufferInitDescriptor {
+                    label: Some("gpu_quads_index_buffer"),
+                    contents: cast_slice(&indices),
+                    usage: BufferUsages::INDEX,
+                },
+            ));
+            gpu_quads
+                .instances
+                .write_buffer(&*render_device, &*render_queue);
+            commands
+                .get_or_spawn(entity)
+                .insert_bundle((GpuQuadsBindGroup {
+                    bind_group: render_device.create_bind_group(&BindGroupDescriptor {
+                        label: Some("gpu_quads_bind_group"),
+                        layout: &quads_pipeline.quads_layout,
+                        entries: &[BindGroupEntry {
+                            binding: 0,
+                            resource: gpu_quads.instances.buffer().unwrap().as_entire_binding(),
+                        }],
+                    }),
+                },));
         }
-        for quad in quads.data.iter() {
-            gpu_quads.instances.push(GpuQuad::from(quad));
-        }
-        gpu_quads.index_count = gpu_quads.instances.len() as u32 * 6;
-        let mut indices = Vec::with_capacity(gpu_quads.index_count as usize);
-        for i in 0..gpu_quads.instances.len() {
-            let base = (i * 6) as u32;
-            indices.push(base + 2);
-            indices.push(base);
-            indices.push(base + 1);
-            indices.push(base + 1);
-            indices.push(base + 3);
-            indices.push(base + 2);
-        }
-        gpu_quads.index_buffer = Some(render_device.create_buffer_with_data(
-            &BufferInitDescriptor {
-                label: Some("gpu_quads_index_buffer"),
-                contents: cast_slice(&indices),
-                usage: BufferUsages::INDEX,
-            },
-        ));
-
-        gpu_quads
-            .instances
-            .write_buffer(&*render_device, &*render_queue);
     }
 }
 
@@ -230,14 +268,13 @@ impl EntityPhaseItem for QuadsPhaseItem {
     }
 }
 
+#[derive(Component)]
+pub struct QueueQuads;
+
 fn queue_quads(
-    mut commands: Commands,
     opaque_3d_draw_functions: Res<DrawFunctions<QuadsPhaseItem>>,
-    quads_pipeline: Res<QuadsPipeline>,
-    render_device: Res<RenderDevice>,
-    quads_query: Query<Entity, With<Quads>>,
-    gpu_quads: Res<GpuQuads>,
     mut views: Query<&mut RenderPhase<QuadsPhaseItem>>,
+    quads_query: Query<Entity, With<ExtractedQuads>>,
 ) {
     let draw_quads = opaque_3d_draw_functions
         .read()
@@ -246,18 +283,6 @@ fn queue_quads(
 
     for mut opaque_phase in views.iter_mut() {
         for entity in quads_query.iter() {
-            commands
-                .get_or_spawn(entity)
-                .insert_bundle((GpuQuadsBindGroup {
-                    bind_group: render_device.create_bind_group(&BindGroupDescriptor {
-                        label: Some("gpu_quads_bind_group"),
-                        layout: &quads_pipeline.quads_layout,
-                        entries: &[BindGroupEntry {
-                            binding: 0,
-                            resource: gpu_quads.instances.buffer().unwrap().as_entire_binding(),
-                        }],
-                    }),
-                },));
             opaque_phase.add(QuadsPhaseItem {
                 entity,
                 draw_function: draw_quads,
@@ -349,9 +374,9 @@ impl render_graph::Node for QuadsPassNode {
     }
 }
 
-struct QuadsPlugin;
+struct VertexPullPlugin;
 
-impl Plugin for QuadsPlugin {
+impl Plugin for VertexPullPlugin {
     fn build(&self, app: &mut App) {
         app.world.resource_mut::<Assets<Shader>>().set_untracked(
             QUADS_SHADER_HANDLE,
