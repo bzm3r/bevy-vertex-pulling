@@ -97,16 +97,23 @@ fn setup(mut commands: Commands) {
         .insert(CameraController::default());
 
     let mut quads = Quads::default();
-    let mut rng = rand::thread_rng();
-    let min = -10.0 * Vec3::ONE;
-    let max = 10.0 * Vec3::ONE;
-    let n_quads = std::env::args()
-        .nth(1)
-        .and_then(|arg| arg.parse::<usize>().ok())
-        .unwrap_or(1_000_000);
+    // let mut rng = rand::thread_rng();
+    // let min = -10.0 * Vec3::ONE;
+    // let max = 10.0 * Vec3::ONE;
+    // let n_quads = std::env::args()
+    //     .nth(1)
+    //     .and_then(|arg| arg.parse::<usize>().ok())
+    //     .unwrap_or(1_000_000);
+    let n_quads = 5;
     info!("Generating {} quads", n_quads);
-    for _ in 0..n_quads {
-        quads.data.push(Quad::random(&mut rng, min, max));
+    let scale = 0.15;
+    for ix in 0..n_quads {
+        let ix = ix as f32;
+        quads.data.push(Quad {
+            color: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            center: Vec3::new(ix + 2.0 * scale, ix + 2.0 * scale, ix),
+            half_extents: Vec3::new(scale * (ix + 1.0), scale * (ix + 1.0), scale * (ix + 1.0)),
+        });
     }
     commands.spawn_bundle((quads,));
 }
